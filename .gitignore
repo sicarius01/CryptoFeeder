@@ -1,0 +1,16 @@
+
+
+/target
+
+# Logs
+*.log
+logs/
+decoder_output.log
+feeder_output.log
+
+# Editor/OS files
+.DS_Store
+Thumbs.db
+
+
+

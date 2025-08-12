@@ -1,0 +1,55 @@
+[package]
+name = "crypto-feeder"
+version = "0.1.0"
+edition = "2021"
+authors = ["CryptoFeeder Team"]
+description = "Ultra-low latency cryptocurrency market data feeder"
+
+[dependencies]
+# WebSocket 비동기 연결
+tokio = { version = "1.0", features = ["full"] }
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+futures-util = "0.3"
+crossbeam-queue = "0.3"
+
+# SIMD JSON 파싱
+simd-json = "0.13"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# UDP 네트워킹
+socket2 = "0.5"
+
+# 시간 및 동기화
+chrono = { version = "0.4", features = ["serde"] }
+
+# 로깅
+log = "0.4"
+env_logger = "0.10"
+sysinfo = "0.30"
+
+# URL 파싱
+url = "2.4"
+
+# 에러 처리
+anyhow = "1.0"
+thiserror = "1.0"
+
+# 설정 관리
+config = "0.14"
+toml = "0.8"
+
+# 원자적 연산
+atomic = "0.5"
+
+[dev-dependencies]
+pretty_assertions = "1.4"
+tempfile = "3.8"
+
+[[bin]]
+name = "crypto-feeder"
+path = "src/main.rs"
+
+[[bin]]
+name = "packet-decoder"
+path = "src/bin/decoder.rs"
