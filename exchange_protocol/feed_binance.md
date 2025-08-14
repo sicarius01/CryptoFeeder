@@ -15,16 +15,17 @@ Binance는 현물(Spot)과 선물(Futures) 시장에 대해 서로 다른 WebSoc
 - **Production**: `wss://fstream.binance.com/ws`
 - **Testnet**: `wss://testnet.binancefuture.com`
 - **연결 형식**: `wss://fstream.binance.com/stream?streams={stream1}/{stream2}/...`
-- **예시**: `wss://fstream.binance.com/stream?streams=btcusdt@aggTrade/btcusdt@depth/ethusdt@aggTrade/ethusdt@depth`
+- **예시**: `wss://fstream.binance.com/stream?streams=btcusdt@trade/btcusdt@depth@0ms/ethusdt@trade/ethusdt@depth@0ms`
 
 ## 스트림 타입
 
 ### Trade 데이터
 - **현물**: `{symbol}@trade` (개별 거래)
-- **선물**: `{symbol}@aggTrade` (집계된 거래)
+- **선물**: `{symbol}@trade` (개별 거래)
 
 ### Depth (호가) 데이터
-- **현물/선물 동일**: `{symbol}@depth`
+- **현물**: `{symbol}@depth`
+- **선물**: `{symbol}@depth@0ms` (초저지연 0ms 업데이트)
 - **업데이트 방식**: 증분 업데이트 (Incremental Updates)
 
 ## 메시지 형식
@@ -44,26 +45,23 @@ Binance는 현물(Spot)과 선물(Futures) 시장에 대해 서로 다른 WebSoc
 }
 ```
 
-### 선물 Trade 메시지 (aggTrade)
+### 선물 Trade 메시지 (trade)
 ```json
 {
-  "stream": "solusdt@aggTrade",
+  "stream": "solusdt@trade",
   "data": {
-    "e": "aggTrade",       // 이벤트 타입
+    "e": "trade",          // 이벤트 타입
     "E": 1753966988030,    // 이벤트 시간
-    "a": 934054024,        // Aggregate trade ID
     "s": "SOLUSDT",        // 심볼
     "p": "178.9500",       // 가격
     "q": "8.00",           // 수량
-    "f": 2516917476,       // First trade ID
-    "l": 2516917479,       // Last trade ID
     "T": 1753966987875,    // 거래 시간
     "m": false             // Is buyer the market maker?
   }
 }
 ```
 
-### Depth 메시지 (현물/선물 동일)
+### Depth 메시지 (현물/선물 공통 포맷)
 ```json
 {
   "e": "depthUpdate",      // 이벤트 타입
@@ -135,7 +133,7 @@ let normalized = NormalizedDepth {
 
 1. **스트림 형식 차이**
    - 현물: 개별 trade 이벤트 (`@trade`)
-   - 선물: 집계된 trade 이벤트 (`@aggTrade`)
+   - 선물: 개별 trade 이벤트 (`@trade`)
 
 2. **URL 구조 차이**
    - 현물: 직접 스트림 경로 사용
@@ -147,6 +145,7 @@ let normalized = NormalizedDepth {
 
 4. **Depth 업데이트**
    - 증분 업데이트만 제공 (초기 스냅샷 없음)
+   - 선물은 `@depth@0ms` 사용 권장
    - 클라이언트가 오더북 상태를 직접 관리해야 함
    - 수량 0은 해당 가격 레벨 제거를 의미
 

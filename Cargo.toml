@@ -53,3 +53,7 @@ path = "src/main.rs"
 [[bin]]
 name = "packet-decoder"
 path = "src/bin/decoder.rs"
+
+[[bin]]
+name = "binance-depth0ms-demo"
+path = "src/bin/binance_depth0ms_demo.rs"

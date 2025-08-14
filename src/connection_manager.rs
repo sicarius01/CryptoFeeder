@@ -430,10 +430,10 @@ impl ConnectionManager {
 
     /// 레거시 Binance WebSocket URL 생성 (기존 로직)
     fn build_binance_websocket_url_legacy(&self, base_url: &str, symbols: &[String]) -> Result<String> {
-        // Combined Stream: Spot uses @trade, Futures uses @aggTrade
+        // Combined Stream: Use @trade for both, and use @depth@0ms for Futures
         let is_futures = base_url.contains("fstream.binance.com");
-        let trade_topic = if is_futures { "aggTrade" } else { "trade" };
-        let depth_topic = "depth"; // consider @100ms if needed
+        let trade_topic = "trade";
+        let depth_topic = if is_futures { "depth@0ms" } else { "depth" };
         let mut streams: Vec<String> = Vec::new();
         for symbol in symbols {
             let binance_symbol = symbol.replace("^", "").to_lowercase();
@@ -613,6 +613,6 @@ mod tests {
         };
         let url = manager.build_binance_websocket_url_from_endpoint(&endpoint, &vec!["BTC^USDT".into(), "ETH^USDT".into()]).unwrap();
         assert!(url.contains("wss://fstream.binance.com/stream?streams="));
-        assert!(url.contains("btcusdt@aggTrade/btcusdt@depth/ethusdt@aggTrade/ethusdt@depth"));
+        assert!(url.contains("btcusdt@trade/btcusdt@depth@0ms/ethusdt@trade/ethusdt@depth@0ms"));
     }
 }

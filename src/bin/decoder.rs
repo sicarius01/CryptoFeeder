@@ -126,6 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut buffer = [0u8; 1500]; // MTU 크기 버퍼
     let mut stats = Stats::new();
+    let mut interval_map: HashMap<String, IntervalStat> = HashMap::new();
     let start = Instant::now();
 
     println!("✅ 수신 준비 완료\n");
@@ -137,7 +138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 stats.total_packets += 1;
                 stats.total_bytes += size as u64;
 
-                if let Err(e) = decode_packet(&buffer[..size], &mut stats) {
+                if let Err(e) = decode_packet(&buffer[..size], &mut stats, &mut interval_map) {
                     eprintln!("❌ 디코딩 오류: {}", e);
                 }
                 if start.elapsed() >= Duration::from_secs(5) && stats.total_packets % 10 == 0 {
@@ -195,7 +196,29 @@ fn parse_simple_ini(content: &str) -> HashMap<String, String> {
     cfg
 }
 
-fn decode_packet(data: &[u8], stats: &mut Stats) -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, Clone)]
+struct IntervalStat {
+    last: Option<Instant>,
+    count: u64,
+    sum_ms: f64,
+}
+
+impl IntervalStat {
+    fn update(&mut self, now: Instant) -> Option<f64> {
+        let dt_ms = self.last.map(|prev| (now - prev).as_secs_f64() * 1000.0);
+        self.last = Some(now);
+        if let Some(dt) = dt_ms {
+            self.count += 1;
+            self.sum_ms += dt;
+            Some(dt)
+        } else {
+            None
+        }
+    }
+    fn avg(&self) -> f64 { if self.count == 0 { 0.0 } else { self.sum_ms / self.count as f64 } }
+}
+
+fn decode_packet(data: &[u8], stats: &mut Stats, intervals: &mut HashMap<String, IntervalStat>) -> Result<(), Box<dyn std::error::Error>> {
     if data.len() < mem::size_of::<PacketHeader>() {
         return Err("패킷이 너무 작음".into());
     }
@@ -215,8 +238,10 @@ fn decode_packet(data: &[u8], stats: &mut Stats) -> Result<(), Box<dyn std::erro
     println!("📋 헤더 정보:");
     println!("  - 프로토콜 버전: {}", protocol_version);
     println!("  - 시퀀스 번호: {}", sequence_number);
-    println!("  - 거래소: {}", header.exchange_as_string());
-    println!("  - 심볼: {}", header.symbol_as_string());
+    let ex = header.exchange_as_string();
+    let sym = header.symbol_as_string();
+    println!("  - 거래소: {}", ex);
+    println!("  - 심볼: {}", sym);
     println!("  - 메시지 타입: {} ({})", message_type, 
              match message_type {
                  0 => "OrderBook",
@@ -244,6 +269,21 @@ fn decode_packet(data: &[u8], stats: &mut Stats) -> Result<(), Box<dyn std::erro
             decode_trade_tick_items(payload, header.item_count())?
         },
         _ => println!("⚠️ 알 수 없는 메시지 타입"),
+    }
+
+    // 오더북 패킷 간격 측정 (BinanceFutures의 depth0ms 확인용 휴리스틱)
+    if message_type == 0 {
+        let key = format!("{}|{}", ex, sym);
+        let entry = intervals.entry(key.clone()).or_insert(IntervalStat { last: None, count: 0, sum_ms: 0.0 });
+        if let Some(dt) = entry.update(Instant::now()) {
+            let avg = entry.avg();
+            if ex == "BinanceFutures" {
+                let classification = if avg < 50.0 { "depth0ms 추정" } else { "(>=50ms)" };
+                println!("⏱️ 간격 측정 [{}]: 최신 {:.1} ms, 평균 {:.1} ms → {}", key, dt, avg, classification);
+            } else {
+                println!("⏱️ 간격 측정 [{}]: 최신 {:.1} ms, 평균 {:.1} ms", key, dt, avg);
+            }
+        }
     }
 
     Ok(())
