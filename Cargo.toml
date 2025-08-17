@@ -57,3 +57,11 @@ path = "src/bin/decoder.rs"
 [[bin]]
 name = "binance-depth0ms-demo"
 path = "src/bin/binance_depth0ms_demo.rs"
+
+[[bin]]
+name = "binance-misc-streams-demo"
+path = "src/bin/binance_misc_streams_demo.rs"
+
+[[bin]]
+name = "udp-counter"
+path = "src/bin/udp_counter.rs"

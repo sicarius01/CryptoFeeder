@@ -115,6 +115,11 @@ pub enum ParsedData {
     Trade(StandardizedTrade),
     TradeBatch(StandardizedTradeBatch),
     OrderBook(StandardizedOrderBookUpdate),
+    IndexPrice { symbol: String, exchange: String, value: f64, timestamp: u64 },
+    MarkPrice { symbol: String, exchange: String, value: f64, timestamp: u64 },
+    FundingRate { symbol: String, exchange: String, value: f64, timestamp: u64 },
+    Liquidation { symbol: String, exchange: String, price: f64, quantity: f64, is_sell: bool, timestamp: u64 },
+    Multi(Vec<ParsedData>),
 }
 
 impl DataParser {
@@ -170,6 +175,23 @@ impl DataParser {
             ParsedData::Trade(mut t) => { t.exchange = exchange.to_string(); ParsedData::Trade(t) }
             ParsedData::TradeBatch(mut b) => { b.exchange = exchange.to_string(); ParsedData::TradeBatch(b) }
             ParsedData::OrderBook(mut ob) => { ob.exchange = exchange.to_string(); ParsedData::OrderBook(ob) }
+            ParsedData::IndexPrice { symbol, exchange: _, value, timestamp } => ParsedData::IndexPrice { symbol, exchange: exchange.to_string(), value, timestamp },
+            ParsedData::MarkPrice { symbol, exchange: _, value, timestamp } => ParsedData::MarkPrice { symbol, exchange: exchange.to_string(), value, timestamp },
+            ParsedData::FundingRate { symbol, exchange: _, value, timestamp } => ParsedData::FundingRate { symbol, exchange: exchange.to_string(), value, timestamp },
+            ParsedData::Liquidation { symbol, exchange: _, price, quantity, is_sell, timestamp } => ParsedData::Liquidation { symbol, exchange: exchange.to_string(), price, quantity, is_sell, timestamp },
+            ParsedData::Multi(items) => {
+                let adj: Vec<ParsedData> = items.into_iter().map(|it| match it {
+                    ParsedData::Trade(mut t) => { t.exchange = exchange.to_string(); ParsedData::Trade(t) }
+                    ParsedData::TradeBatch(mut b) => { b.exchange = exchange.to_string(); ParsedData::TradeBatch(b) }
+                    ParsedData::OrderBook(mut ob) => { ob.exchange = exchange.to_string(); ParsedData::OrderBook(ob) }
+                    ParsedData::IndexPrice { symbol, exchange: _, value, timestamp } => ParsedData::IndexPrice { symbol, exchange: exchange.to_string(), value, timestamp },
+                    ParsedData::MarkPrice { symbol, exchange: _, value, timestamp } => ParsedData::MarkPrice { symbol, exchange: exchange.to_string(), value, timestamp },
+                    ParsedData::FundingRate { symbol, exchange: _, value, timestamp } => ParsedData::FundingRate { symbol, exchange: exchange.to_string(), value, timestamp },
+                    ParsedData::Liquidation { symbol, exchange: _, price, quantity, is_sell, timestamp } => ParsedData::Liquidation { symbol, exchange: exchange.to_string(), price, quantity, is_sell, timestamp },
+                    ParsedData::Multi(_) => ParsedData::Multi(Vec::new()),
+                }).collect();
+                ParsedData::Multi(adj)
+            }
         };
         Ok(adjusted)
     }
@@ -205,6 +227,37 @@ impl DataParser {
 
                 debug!("Binance Depth 증분 업데이트: {} bids, {} asks", update.bids.len(), update.asks.len());
                 Ok(ParsedData::OrderBook(Self::convert_binance_depth_update(update)?))
+            }
+            "markPriceUpdate" => {
+                let sym = event_obj.get("s").and_then(|v| v.as_str()).ok_or_else(|| CryptoFeederError::JsonParseError("symbol 누락".into()))?;
+                let mark = event_obj.get("p").and_then(|v| v.as_str()).ok_or_else(|| CryptoFeederError::JsonParseError("mark 누락".into()))?;
+                let index = event_obj.get("i").and_then(|v| v.as_str()).ok_or_else(|| CryptoFeederError::JsonParseError("index 누락".into()))?;
+                let funding = event_obj.get("r").and_then(|v| v.as_str()).ok_or_else(|| CryptoFeederError::JsonParseError("funding 누락".into()))?;
+                let ts = event_obj.get("E").and_then(|v| v.as_u64()).unwrap_or(0) * 1_000_000;
+                let symbol_std = Self::normalize_binance_symbol(sym);
+                let exchange = Self::normalize_exchange_name("binance", "futures");
+                let mark_f = mark.parse::<f64>().map_err(|e| CryptoFeederError::JsonParseError(format!("mark 파싱 실패: {}", e)))?;
+                let index_f = index.parse::<f64>().map_err(|e| CryptoFeederError::JsonParseError(format!("index 파싱 실패: {}", e)))?;
+                let funding_f = funding.parse::<f64>().map_err(|e| CryptoFeederError::JsonParseError(format!("funding 파싱 실패: {}", e)))?;
+                Ok(ParsedData::Multi(vec![
+                    ParsedData::IndexPrice { symbol: symbol_std.clone(), exchange: exchange.clone(), value: index_f, timestamp: ts },
+                    ParsedData::MarkPrice { symbol: symbol_std.clone(), exchange: exchange.clone(), value: mark_f, timestamp: ts },
+                    ParsedData::FundingRate { symbol: symbol_std, exchange, value: funding_f, timestamp: ts },
+                ]))
+            }
+            "forceOrder" => {
+                let o = event_obj.get("o").ok_or_else(|| CryptoFeederError::JsonParseError("forceOrder:o 누락".into()))?;
+                let sym = o.get("s").and_then(|v| v.as_str()).ok_or_else(|| CryptoFeederError::JsonParseError("symbol 누락".into()))?;
+                let side = o.get("S").and_then(|v| v.as_str()).unwrap_or("");
+                let price = o.get("ap").or_else(|| o.get("p")).and_then(|v| v.as_str()).unwrap_or("0");
+                let qty = o.get("q").and_then(|v| v.as_str()).unwrap_or("0");
+                let ts = event_obj.get("E").and_then(|v| v.as_u64()).unwrap_or(0) * 1_000_000;
+                let symbol_std = Self::normalize_binance_symbol(sym);
+                let exchange = Self::normalize_exchange_name("binance", "futures");
+                let price_f = price.parse::<f64>().unwrap_or(0.0);
+                let qty_f = qty.parse::<f64>().unwrap_or(0.0);
+                let is_sell = side.eq_ignore_ascii_case("SELL");
+                Ok(ParsedData::Liquidation { symbol: symbol_std, exchange, price: price_f, quantity: qty_f, is_sell, timestamp: ts })
             }
             "trade" => {
                 debug!("Binance 체결 데이터 파싱 중");

@@ -439,6 +439,10 @@ impl ConnectionManager {
             let binance_symbol = symbol.replace("^", "").to_lowercase();
             streams.push(format!("{}@{}", &binance_symbol, trade_topic));
             streams.push(format!("{}@{}", &binance_symbol, depth_topic));
+            if is_futures {
+                streams.push(format!("{}@markPrice@1s", &binance_symbol));
+                streams.push(format!("{}@forceOrder", &binance_symbol));
+            }
         }
         let url = if base_url.ends_with("/ws/") {
             // 과거 단일 스트림 베이스가 들어온 경우, combined stream 엔드포인트로 교체

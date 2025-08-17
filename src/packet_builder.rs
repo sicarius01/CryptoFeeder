@@ -2,7 +2,7 @@
 /// 표준화된 내부 데이터 구조체를 UDP 바이너리 패킷으로 직렬화
 
 use crate::data_parser::{ParsedData, StandardizedTrade, StandardizedOrderBookUpdate, StandardizedTradeBatch};
-use crate::protocol::{PacketHeader, OrderBookItem, TradeTickItem, MESSAGE_TYPE_ORDER_BOOK, MESSAGE_TYPE_TRADE_TICK};
+use crate::protocol::{PacketHeader, OrderBookItem, TradeTickItem, PriceValueItem, FundingRateItem, MESSAGE_TYPE_ORDER_BOOK, MESSAGE_TYPE_TRADE_TICK, MESSAGE_TYPE_INDEX_PRICE, MESSAGE_TYPE_MARK_PRICE, MESSAGE_TYPE_FUNDING_RATE, MESSAGE_TYPE_LIQUIDATION, PRICE_SCALE, QUANTITY_SCALE};
 use crate::events::SystemEvent;
 use crate::errors::{CryptoFeederError, Result};
 
@@ -36,6 +36,32 @@ impl PacketBuilder {
             ParsedData::Trade(trade) => self.build_trade_packets(trade),
             ParsedData::TradeBatch(batch) => self.build_trade_batch_packets(batch),
             ParsedData::OrderBook(order_book) => self.build_order_book_packets(order_book),
+            ParsedData::IndexPrice { symbol, exchange, value, timestamp } => {
+                let scaled = (value * PRICE_SCALE as f64) as i64;
+                let pkt = self.build_single_value_packet(&symbol, &exchange, MESSAGE_TYPE_INDEX_PRICE, timestamp, scaled)?;
+                Ok(vec![pkt])
+            }
+            ParsedData::MarkPrice { symbol, exchange, value, timestamp } => {
+                let scaled = (value * PRICE_SCALE as f64) as i64;
+                let pkt = self.build_single_value_packet(&symbol, &exchange, MESSAGE_TYPE_MARK_PRICE, timestamp, scaled)?;
+                Ok(vec![pkt])
+            }
+            ParsedData::FundingRate { symbol, exchange, value, timestamp } => {
+                let scaled = (value * PRICE_SCALE as f64) as i64;
+                let pkt = self.build_single_value_packet(&symbol, &exchange, MESSAGE_TYPE_FUNDING_RATE, timestamp, scaled)?;
+                Ok(vec![pkt])
+            }
+            ParsedData::Liquidation { symbol, exchange, price, quantity, is_sell, timestamp } => {
+                let pkt = self.build_liquidation_packet(&symbol, &exchange, timestamp, price, quantity, is_sell)?;
+                Ok(vec![pkt])
+            }
+            ParsedData::Multi(items) => {
+                let mut out = Vec::new();
+                for it in items {
+                    out.extend(self.build_packets(it)?);
+                }
+                Ok(out)
+            }
         }
     }
 
@@ -237,6 +263,55 @@ impl PacketBuilder {
                order_book.exchange, order_book.symbol, packets.len(), all_items.len());
 
         Ok(packets)
+    }
+
+    /// 단일 값(가격/비율) 패킷 생성 헬퍼
+    pub fn build_single_value_packet(&self, symbol: &str, exchange: &str, message_type: u8, exchange_timestamp: u64, value_scaled: i64) -> Result<UdpPacket> {
+        let mut header = PacketHeader::new();
+        self.setup_header(&mut header, symbol, exchange, message_type, exchange_timestamp);
+        header.set_flags_and_count(true, 1);
+
+        let item_bytes = match message_type {
+            MESSAGE_TYPE_INDEX_PRICE | MESSAGE_TYPE_MARK_PRICE => {
+                let item = PriceValueItem { value: value_scaled };
+                unsafe {
+                    let ptr = &item as *const PriceValueItem as *const u8;
+                    std::slice::from_raw_parts(ptr, std::mem::size_of::<PriceValueItem>()).to_vec()
+                }
+            }
+            MESSAGE_TYPE_FUNDING_RATE => {
+                let item = FundingRateItem { value: value_scaled };
+                unsafe {
+                    let ptr = &item as *const FundingRateItem as *const u8;
+                    std::slice::from_raw_parts(ptr, std::mem::size_of::<FundingRateItem>()).to_vec()
+                }
+            }
+            _ => return Err(CryptoFeederError::Other("잘못된 단일 값 message_type".to_string()))
+        };
+
+        self.create_packet(header, vec![item_bytes])
+    }
+
+    /// 청산 패킷 생성
+    pub fn build_liquidation_packet(&self, symbol: &str, exchange: &str, exchange_timestamp: u64, price: f64, qty: f64, is_sell: bool) -> Result<UdpPacket> {
+        let mut header = PacketHeader::new();
+        self.setup_header(&mut header, symbol, exchange, MESSAGE_TYPE_LIQUIDATION, exchange_timestamp);
+        header.set_flags_and_count(true, 1);
+
+        let scaled_price = (price * PRICE_SCALE as f64) as i64;
+        let scaled_qty = (qty * QUANTITY_SCALE as f64) as i64;
+        let quantity_with_flags = if is_sell { scaled_qty | (1i64 << 63) } else { scaled_qty };
+
+        #[repr(C, packed)]
+        struct LiquidationItemLocal { price: i64, quantity_with_flags: i64 }
+
+        let item = LiquidationItemLocal { price: scaled_price, quantity_with_flags };
+        let item_bytes = unsafe {
+            let ptr = &item as *const LiquidationItemLocal as *const u8;
+            std::slice::from_raw_parts(ptr, std::mem::size_of::<LiquidationItemLocal>()).to_vec()
+        };
+
+        self.create_packet(header, vec![item_bytes])
     }
 
     /// 패킷 헤더 기본 설정

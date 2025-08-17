@@ -34,10 +34,34 @@ pub struct TradeTickItem {
 // 메시지 타입 상수
 pub const MESSAGE_TYPE_ORDER_BOOK: u8 = 0;
 pub const MESSAGE_TYPE_TRADE_TICK: u8 = 1;
+pub const MESSAGE_TYPE_INDEX_PRICE: u8 = 2;    // 새: Index Price
+pub const MESSAGE_TYPE_MARK_PRICE: u8 = 3;     // 새: Mark Price
+pub const MESSAGE_TYPE_FUNDING_RATE: u8 = 4;   // 새: Funding Rate
+pub const MESSAGE_TYPE_LIQUIDATION: u8 = 5;    // 새: Liquidation
 
 // 스케일링 상수
 pub const PRICE_SCALE: i64 = 100_000_000; // 10^8
 pub const QUANTITY_SCALE: i64 = 100_000_000; // 10^8
+pub const FUNDING_RATE_SCALE: i64 = 100_000_000; // 10^8 (펀딩 비율도 동일 스케일 적용)
+
+#[repr(C, packed)]
+#[derive(Debug, Copy, Clone)]
+pub struct PriceValueItem {
+    pub value: i64,                // 8B, Scaled by 10^8 (가격용)
+} // 총 8 바이트
+
+#[repr(C, packed)]
+#[derive(Debug, Copy, Clone)]
+pub struct FundingRateItem {
+    pub value: i64,                // 8B, Scaled by 10^8 (비율용)
+} // 총 8 바이트
+
+#[repr(C, packed)]
+#[derive(Debug, Copy, Clone)]
+pub struct LiquidationItem {
+    pub price: i64,                // 8B, Scaled by 10^8
+    pub quantity_with_flags: i64,  // 8B, quantity + is_sell flag
+} // 총 16 바이트
 
 impl PacketHeader {
     pub fn new() -> Self {
