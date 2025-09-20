@@ -104,11 +104,16 @@ impl Stats {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔍 CryptoFeeder 패킷 디코더 시작");
 
-    let udp_cfg = read_udp_config_from_ini().unwrap_or(UdpCfg {
+    let args: Vec<String> = std::env::args().collect();
+    // 우선순위: CLI 포트 > config.ini 기본 포트 > 55555
+    let mut udp_cfg = read_udp_config_from_ini().unwrap_or(UdpCfg {
         multicast_addr: "239.255.1.1".to_string(),
         port: 55555,
         interface_addr: "0.0.0.0".to_string(),
     });
+    if args.len() >= 2 {
+        if let Ok(p) = args[1].parse::<u16>() { udp_cfg.port = p; }
+    }
 
     println!(
         "📡 멀티캐스트 그룹 {}:{} 수신 대기 중...",
@@ -174,10 +179,8 @@ fn read_udp_config_from_ini() -> Result<UdpCfg, Box<dyn std::error::Error>> {
     let map = parse_simple_ini(&content);
     let multicast_addr = map
         .get("multicast_addr").cloned().unwrap_or_else(|| "239.255.1.1".to_string());
-    let port = map
-        .get("port")
-        .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(55555);
+    // 포트는 symbol_config에서 세션별로 관리되므로 여기서는 기본값만 사용
+    let port = 55555u16;
     let interface_addr = map
         .get("interface_addr").cloned().unwrap_or_else(|| "0.0.0.0".to_string());
     Ok(UdpCfg { multicast_addr, port, interface_addr })

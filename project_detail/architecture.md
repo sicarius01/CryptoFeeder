@@ -7,7 +7,7 @@
 1.  **WebSocket 수집 (Ingestion)**: 다수의 거래소에 대해 비동기(Asynchronous) WebSocket 연결을 생성하고 관리합니다.
 2.  **SIMD 파싱 (Parsing)**: 수신된 원시 JSON 텍스트를 `simd-json`과 같은 라이브러리를 사용해 CPU 레벨에서 가속하여 Rust 구조체로 변환합니다.
 3.  **프로토콜 변환 (Serialization)**: 파싱된 데이터를 `udp_packet.md` 및 `event_packet.md` 명세에 따라 표준 바이너리 포맷으로 직렬화합니다. 데이터 정렬 규칙에 따라 체결틱과 오더북 데이터를 정렬하여 패킷을 생성합니다.
-4.  **UDP 전송 (Broadcast)**: 직렬화된 바이너리 패킷을 내부 네트워크에 UDP 멀티캐스트로 전송합니다. `config/config.ini` 파일에서 설정된 멀티캐스트 주소와 포트를 사용합니다.
+4.  **UDP 전송 (Broadcast)**: 직렬화된 바이너리 패킷을 내부 네트워크에 UDP 멀티캐스트로 전송합니다. 멀티캐스트 IP/인터페이스는 `config/config.ini`, 세션별 포트는 `config/symbol_config.ini`에서 관리합니다.
 
 ---
 
@@ -18,7 +18,8 @@
 * **설정 파일 관리**: 
   - `config/symbol_config.ini`: 거래소별 심볼 그룹을 동적으로 설정
   - `config/endpoint.ini`: 거래소별 WebSocket 엔드포인트 및 연결 설정 관리
-  - `config/config.ini`: UDP 멀티캐스트 네트워크 설정
+  - `config/config.ini`: UDP 멀티캐스트 네트워크 설정(IP, 인터페이스)
+  - `config/symbol_config.ini`: 세션별 전송 포트 매핑(예: `55557=DOGE^USDT, XRP^USDT, SOL^USDT`)
   - 각 거래소별로 여러 세션으로 심볼을 분할하여 관리
   - 설정 파일이 없을 경우 기본 설정으로 폴백
 * **데이터 표준화**: 
@@ -38,9 +39,9 @@
 ### 1. 심볼 설정 (`config/symbol_config.ini`)
 ```ini
 [BinanceSpot]
-BTC^USDT
-ETH^USDT, ADA^USDT, SOL^USDT, DOT^USDT, MATIC^USDT
-DOGE^USDT, LINK^USDT, UNI^USDT, AVAX^USDT, ATOM^USDT
+55559=BTC^USDT
+55558=ETH^USDT, ADA^USDT, SOL^USDT, DOT^USDT, MATIC^USDT
+55557=DOGE^USDT, LINK^USDT, UNI^USDT, AVAX^USDT, ATOM^USDT
 
 [BinanceFutures]
 BTC^USDT
@@ -102,9 +103,10 @@ enabled=true
 ```ini
 [UDP]
 multicast_addr=239.255.1.1
-port=55555
 interface_addr=0.0.0.0
 ```
+
+포트는 `symbol_config.ini`의 각 세션 라인에 `포트=심볼1, 심볼2, ...` 형식으로 지정합니다.
 
 ### 설정 규칙
 - **BTC 심볼**: 각 라인에 하나씩 독립 세션으로 관리

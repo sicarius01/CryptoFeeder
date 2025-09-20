@@ -24,8 +24,8 @@
   - 오더북: Ask 오름차순, Bid 내림차순
   - 같은 가격일 때는 메시지 순서 보장
 * **설정 관리**: 
-  - `config/config.ini`: UDP 멀티캐스트 IP/포트 설정 (기본: 239.255.1.1:55555)
-  - `config/symbol_config.ini`: 거래소별 심볼 그룹 및 세션 관리 설정
+  - `config/config.ini`: UDP 멀티캐스트 IP/인터페이스 설정
+  - `config/symbol_config.ini`: 거래소별 심볼 그룹 및 세션별 전송 포트 설정 (예: `55557=DOGE^USDT, XRP^USDT, SOL^USDT`)
   - `config/endpoint.ini`: 거래소별 WebSocket 엔드포인트 및 연결 설정
 * 상세한 표준화 규칙은 `../udp_packet_detail/udp_packet.md`의 5장을 참조하십시오.
 

@@ -29,6 +29,7 @@ pub struct ExchangeConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UdpConfig {
     pub multicast_addr: String,
+    // port는 하위호환 목적의 필드입니다. 실제 전송 포트는 symbol_config.ini의 세션별 포트를 사용합니다.
     pub port: u16,
     pub interface_addr: String,
 }
@@ -63,6 +64,7 @@ pub struct ExchangeSymbolGroup {
 pub struct SymbolSession {
     pub symbols: Vec<String>,
     pub is_btc_session: bool,
+    pub port: u16,
 }
 
 /// 엔드포인트 설정 전체 구조체
@@ -92,7 +94,7 @@ impl Config {
             }
         };
 
-        // UDP 설정
+        // UDP 설정 (포트는 세션별로 symbol_config.ini에서 관리, 여기의 port는 하위호환 기본값)
         let udp_config = UdpConfig {
             multicast_addr: ini_map.get("multicast_addr").cloned().unwrap_or_else(|| "239.255.1.1".to_string()),
             port: ini_map.get("port").and_then(|p| p.parse::<u16>().ok()).unwrap_or(55555),
@@ -202,7 +204,7 @@ impl SymbolConfig {
             let line = line.trim();
             
             // 빈 줄이나 주석 라인 무시
-            if line.is_empty() || line.starts_with('#') {
+            if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
                 continue;
             }
 
@@ -244,7 +246,21 @@ impl SymbolConfig {
 
     /// 심볼 라인을 파싱하여 SymbolSession 생성
     fn parse_symbol_line(line: &str) -> Result<SymbolSession> {
-        let symbols: Vec<String> = line
+        // 지원 형식:
+        //   <port>=SYM1, SYM2, ...
+        //   (하위호환) SYM1, SYM2, ...  → 이 경우 에러로 처리하거나 기본 포트(55555) 사용
+        let (port, symbols_str) = if let Some((p, rest)) = line.split_once('=') {
+            let port_num = p.trim().parse::<u16>().map_err(|e| crate::errors::CryptoFeederError::Other(
+                format!("세션 라인의 포트 파싱 실패 '{}': {}", p.trim(), e)
+            ))?;
+            (port_num, rest)
+        } else {
+            // 하위호환: 포트 미지정 라인은 경고 후 기본 포트 사용
+            log::warn!("symbol_config.ini에 포트가 지정되지 않은 세션이 있습니다. 기본 포트 55555를 사용합니다: {}", line);
+            (55555u16, line)
+        };
+
+        let symbols: Vec<String> = symbols_str
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
@@ -256,12 +272,12 @@ impl SymbolConfig {
             ));
         }
 
-        // BTC가 포함된 세션인지 확인 (첫 번째 심볼만 체크, BTC는 독립 세션)
         let is_btc_session = symbols.len() == 1 && symbols[0].starts_with("BTC^");
 
         Ok(SymbolSession {
             symbols,
             is_btc_session,
+            port,
         })
     }
 

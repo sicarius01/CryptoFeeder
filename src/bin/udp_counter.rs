@@ -16,10 +16,8 @@ fn read_udp_config_from_ini() -> Result<UdpCfg, Box<dyn std::error::Error>> {
 	let map = parse_simple_ini(&content);
 	let multicast_addr = map
 		.get("multicast_addr").cloned().unwrap_or_else(|| "239.255.1.1".to_string());
-	let port = map
-		.get("port")
-		.and_then(|s| s.parse::<u16>().ok())
-		.unwrap_or(55555);
+	// 기본 포트는 55555 (실제 세션 포트는 symbol_config.ini에서 지정)
+	let port = 55555u16;
 	let interface_addr = map
 		.get("interface_addr").cloned().unwrap_or_else(|| "0.0.0.0".to_string());
 	Ok(UdpCfg { multicast_addr, port, interface_addr })
@@ -53,7 +51,9 @@ struct PacketHeader {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 	println!("🔎 UDP 패킷 카운터 시작 (30초)");
-	let cfg = read_udp_config_from_ini()?;
+	let mut cfg = read_udp_config_from_ini()?;
+	let args: Vec<String> = std::env::args().collect();
+	if args.len() >= 2 { if let Ok(p) = args[1].parse::<u16>() { cfg.port = p; } }
 	println!("📡 수신: {}:{} (iface {})", cfg.multicast_addr, cfg.port, cfg.interface_addr);
 
 	let bind_addr = format!("0.0.0.0:{}", cfg.port);

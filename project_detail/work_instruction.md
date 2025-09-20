@@ -46,7 +46,7 @@
 * **기능**: 생성된 UDP 패킷을 네트워크에 전송합니다.
 * **요구사항**:
     1.  Rust의 표준 라이브러리 `std::net::UdpSocket`을 사용합니다.
-    2.  설정 파일(Configuration)에서 IP 주소와 포트를 읽어와 **UDP 멀티캐스트**를 수행하도록 구현합니다.
+    2.  설정 파일(Configuration)에서 IP/인터페이스(`config/config.ini`), 세션별 포트(`config/symbol_config.ini`)를 읽어와 **UDP 멀티캐스트**를 수행하도록 구현합니다.
 
 ## Module 5: 설정 파일 관리 (`config_management`)
 
@@ -68,7 +68,7 @@
 
 ### 5.3 네트워크 설정 관리 (`config/config.ini`)
 * **요구사항**:
-    1.  **UDP 멀티캐스트**: multicast_addr, port, interface_addr 설정
+    1.  **UDP 멀티캐스트**: multicast_addr, interface_addr 설정 (포트는 `symbol_config.ini` 세션 라인에서 지정)
     2.  **기본값 지원**: 설정 파일이 없어도 기본값으로 동작
 
 ### 설정 파일 예시
@@ -76,8 +76,8 @@
 #### Symbol Config
 ```ini
 [BinanceSpot]
-BTC^USDT
-ETH^USDT, ADA^USDT, SOL^USDT, DOT^USDT, MATIC^USDT
+55559=BTC^USDT
+55558=ETH^USDT, ADA^USDT, SOL^USDT, DOT^USDT, MATIC^USDT
 ```
 
 #### Endpoint Config
@@ -93,7 +93,6 @@ enabled=true
 ```ini
 [UDP]
 multicast_addr=239.255.1.1
-port=55555
 interface_addr=0.0.0.0
 ```
 

@@ -6,13 +6,20 @@ use crate::packet_builder::UdpPacket;
 use crate::errors::{CryptoFeederError, Result};
 
 use log::{info, debug, error, warn};
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
+use std::sync::{Mutex, Arc};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct UdpMulticaster {
+    // 기본(레거시) 포트용 소켓
     socket: UdpSocket,
     target_addr: SocketAddr,
     connected: bool,
+    // 멀티포트 지원: 포트별 연결된 소켓 캐시
+    multicast_ip: Ipv4Addr,
+    interface_ip: Ipv4Addr,
+    sockets_by_port: Mutex<HashMap<u16, Arc<UdpSocket>>>,
     packets_sent: AtomicU64,
     bytes_sent: AtomicU64,
 }
@@ -63,6 +70,9 @@ impl UdpMulticaster {
             socket,
             target_addr,
             connected,
+            multicast_ip,
+            interface_ip,
+            sockets_by_port: Mutex::new(HashMap::new()),
             packets_sent: AtomicU64::new(0),
             bytes_sent: AtomicU64::new(0),
         })
@@ -103,6 +113,64 @@ impl UdpMulticaster {
                 error!("❌ UDP 전송 실패: {}", e);
                 Err(CryptoFeederError::UdpError(e))
             }
+        }
+    }
+
+    /// 특정 포트로 UDP 패킷 전송 (세션별 포트 분산용)
+    pub async fn send_packet_to_port(&self, packet: UdpPacket, port: u16) -> Result<()> {
+        // 기본 포트와 같으면 기존 경로 재사용
+        if port == self.target_addr.port() {
+            return self.send_packet(packet).await;
+        }
+
+        // 포트별 연결된 소켓을 캐시하여 전송 비용 최소화
+        let maybe_send = {
+            // 한 번만 잠금 유지
+            let mut map = self.sockets_by_port.lock().unwrap();
+            if !map.contains_key(&port) {
+                let target_addr = SocketAddr::from((self.multicast_ip, port));
+                match UdpSocket::bind((self.interface_ip, 0)) {
+                    Ok(sock) => {
+                        sock.set_nonblocking(true).ok();
+                        sock.set_multicast_ttl_v4(1).ok();
+                        sock.set_multicast_loop_v4(false).ok();
+                        if let Err(e) = sock.connect(target_addr) {
+                            warn!("⚠️ UDP connect 실패({}) for port {}. send_to 경로 사용 예정", e, port);
+                        } else {
+                            info!("🔗 UDP connect 성공: {}", target_addr);
+                        }
+                        map.insert(port, Arc::new(sock));
+                    }
+                    Err(e) => {
+                        error!("❌ 포트 {}용 UDP 소켓 생성 실패: {}", port, e);
+                        return Err(CryptoFeederError::UdpError(e));
+                    }
+                }
+            }
+            // 클론은 비용이 작음 (소켓은 내부적으로 공유 카운트됨)
+            map.get(&port).cloned()
+        };
+
+        if let Some(sock) = maybe_send {
+            let send_result = sock.send(&packet.data);
+            match send_result {
+                Ok(bytes_sent) => {
+                    if bytes_sent != packet.size { error!("⚠️ 부분 전송: {}/{} bytes", bytes_sent, packet.size); }
+                    self.packets_sent.fetch_add(1, Ordering::Relaxed);
+                    self.bytes_sent.fetch_add(bytes_sent as u64, Ordering::Relaxed);
+                    Ok(())
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    debug!("📤 UDP 전송 버퍼 가득참, 패킷 드롭");
+                    Ok(())
+                }
+                Err(e) => {
+                    error!("❌ UDP 전송 실패: {}", e);
+                    Err(CryptoFeederError::UdpError(e))
+                }
+            }
+        } else {
+            Err(CryptoFeederError::Other(format!("포트 {}용 소켓을 사용할 수 없습니다", port)))
         }
     }
 

@@ -217,10 +217,9 @@ impl ConnectionManager {
         // UDP 패킷 생성 및 전송
         // TradeTick의 배치 전송을 극대화하기 위해, 같은 폴링 사이클의 여러 Trade를 묶을 수 있는 경로를 우선 사용
         let packets = self.packet_builder.build_packets(parsed_data)?;
-        
-        for packet in packets {
-            self.udp_broadcaster.send_packet(packet).await?;
-        }
+
+        // 기본 경로: 레거시 포트로 전송 (세션 컨텍스트가 없는 경우)
+        for packet in packets { self.udp_broadcaster.send_packet(packet).await?; }
 
         Ok(())
     }
@@ -254,13 +253,13 @@ impl ConnectionManager {
                   exchange_name, session_type, session_idx, symbols_str, retry_count + 1, MAX_RETRY_COUNT);
 
             // 상태 이벤트: CONNECTING (표시용 거래소명 그대로 기록)
-            let _ = self.send_connection_event(exchange_name, CONNECTION_STATUS_DISCONNECTED, CONNECTION_STATUS_CONNECTING, retry_count, 0).await;
+            let _ = self.send_connection_event_to_port(exchange_name, CONNECTION_STATUS_DISCONNECTED, CONNECTION_STATUS_CONNECTING, retry_count, 0, session.port).await;
 
             match self.connect_to_symbol_session(exchange_name, session_idx, session).await {
                 Ok(_) => {
                     info!("✅ {} [{}세션 #{}] 연결 성공", exchange_name, session_type, session_idx);
                     // 상태 이벤트: CONNECTED (표시용 거래소명 그대로 기록)
-                    let _ = self.send_connection_event(exchange_name, CONNECTION_STATUS_CONNECTING, CONNECTION_STATUS_CONNECTED, retry_count, 0).await;
+                    let _ = self.send_connection_event_to_port(exchange_name, CONNECTION_STATUS_CONNECTING, CONNECTION_STATUS_CONNECTED, retry_count, 0, session.port).await;
                     retry_count = 0; // 성공 시 재시도 카운트 리셋
                 },
                 Err(e) => {
@@ -272,7 +271,7 @@ impl ConnectionManager {
                         error!("💀 {} [{}세션 #{}] 최대 재시도 횟수({}) 초과. 연결 포기", 
                                exchange_name, session_type, session_idx, MAX_RETRY_COUNT);
                         // 상태 이벤트: FAILED (표시용 거래소명 그대로 기록)
-                        let _ = self.send_connection_event(exchange_name, CONNECTION_STATUS_RECONNECTING, CONNECTION_STATUS_FAILED, retry_count, 0).await;
+                        let _ = self.send_connection_event_to_port(exchange_name, CONNECTION_STATUS_RECONNECTING, CONNECTION_STATUS_FAILED, retry_count, 0, session.port).await;
                         return Err(CryptoFeederError::Other(
                             format!("{} [{}세션 #{}] 연결 실패 - 최대 재시도 횟수 초과", 
                                     exchange_name, session_type, session_idx)
@@ -283,7 +282,7 @@ impl ConnectionManager {
                     warn!("🔄 {}초 후 {} [{}세션 #{}] 재연결 시도", 
                           delay.as_secs(), exchange_name, session_type, session_idx);
                     // 상태 이벤트: RECONNECTING (표시용 거래소명 그대로 기록)
-                    let _ = self.send_connection_event(exchange_name, CONNECTION_STATUS_CONNECTED, CONNECTION_STATUS_RECONNECTING, retry_count, 0).await;
+                    let _ = self.send_connection_event_to_port(exchange_name, CONNECTION_STATUS_CONNECTED, CONNECTION_STATUS_RECONNECTING, retry_count, 0, session.port).await;
                     
                     time::sleep(delay).await;
                 }
@@ -335,23 +334,22 @@ impl ConnectionManager {
                 Ok(Message::Text(text)) => {
                     debug!("📥 {} [세션 #{}] 텍스트 메시지 수신: {} bytes", 
                            exchange_name, session_idx, text.len());
-                    
-                    if let Err(e) = self.process_message(exchange_name, text.into_bytes()).await {
+                    // 세션 포트로 전송
+                    if let Err(e) = self.process_and_send_to_port(exchange_name, text.into_bytes(), session.port).await {
                         error!("❌ {} [세션 #{}] 메시지 처리 실패: {}", exchange_name, session_idx, e);
                     }
                 },
                 Ok(Message::Binary(data)) => {
                     debug!("📥 {} [세션 #{}] 바이너리 메시지 수신: {} bytes", 
                            exchange_name, session_idx, data.len());
-                    
-                    if let Err(e) = self.process_message(exchange_name, data).await {
+                    if let Err(e) = self.process_and_send_to_port(exchange_name, data, session.port).await {
                         error!("❌ {} [세션 #{}] 메시지 처리 실패: {}", exchange_name, session_idx, e);
                     }
                 },
                 Ok(Message::Close(_)) => {
                     info!("🔌 {} [세션 #{}] WebSocket 연결 종료됨", exchange_name, session_idx);
                     // 상태 이벤트: DISCONNECTED (표시용 거래소명 그대로 기록)
-                    let _ = self.send_connection_event(exchange_name, CONNECTION_STATUS_CONNECTED, CONNECTION_STATUS_DISCONNECTED, 0, 0).await;
+                    let _ = self.send_connection_event_to_port(exchange_name, CONNECTION_STATUS_CONNECTED, CONNECTION_STATUS_DISCONNECTED, 0, 0, session.port).await;
                     break;
                 },
                 Ok(Message::Ping(payload)) => {
@@ -369,7 +367,7 @@ impl ConnectionManager {
                 Err(e) => {
                     error!("❌ {} [세션 #{}] WebSocket 오류: {}", exchange_name, session_idx, e);
                     // 상태 이벤트: DISCONNECTED (표시용 거래소명 그대로 기록)
-                    let _ = self.send_connection_event(exchange_name, CONNECTION_STATUS_CONNECTED, CONNECTION_STATUS_DISCONNECTED, 0, 0).await;
+                    let _ = self.send_connection_event_to_port(exchange_name, CONNECTION_STATUS_CONNECTED, CONNECTION_STATUS_DISCONNECTED, 0, 0, session.port).await;
                     return Err(CryptoFeederError::WebSocketError(e));
                 }
             }
@@ -377,6 +375,14 @@ impl ConnectionManager {
 
         info!("🔚 {} [세션 #{}] 메시지 수신 루프 종료", exchange_name, session_idx);
         Err(CryptoFeederError::Other("WebSocket 연결이 예기치 않게 종료됨".to_string()))
+    }
+
+    /// 메시지를 파싱하여 세션 포트로 전송
+    async fn process_and_send_to_port(&self, exchange: &str, data: Vec<u8>, port: u16) -> Result<()> {
+        let parsed = self.data_parser.parse_message(exchange, data)?;
+        let packets = self.packet_builder.build_packets(parsed)?;
+        for packet in packets { self.udp_broadcaster.send_packet_to_port(packet, port).await?; }
+        Ok(())
     }
 
     /// endpoint.ini 설정을 기반으로 WebSocket URL 생성
@@ -531,7 +537,15 @@ impl ConnectionManager {
         let event = SystemEvent::ConnectionStatus(ConnectionStatus::new(exchange_id, previous_status, current_status, retry_count, error_code));
         // 표시용 문자열(ex: BinanceSpot/BinanceFutures)을 그대로 헤더에 기록
         let packet = self.packet_builder.build_event_packet_with_exchange(event, exchange_name)?;
+        // 심볼 세션 컨텍스트가 없으므로 레거시 포트로 전송
         self.udp_broadcaster.send_packet(packet).await
+    }
+
+    async fn send_connection_event_to_port(&self, exchange_name: &str, previous_status: u8, current_status: u8, retry_count: u32, error_code: u64, port: u16) -> Result<()> {
+        let exchange_id = infer_exchange_id_from_display(exchange_name);
+        let event = SystemEvent::ConnectionStatus(ConnectionStatus::new(exchange_id, previous_status, current_status, retry_count, error_code));
+        let packet = self.packet_builder.build_event_packet_with_exchange(event, exchange_name)?;
+        self.udp_broadcaster.send_packet_to_port(packet, port).await
     }
 }
 
